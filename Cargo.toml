@@ -1,0 +1,11 @@
+[package]
+name = "tle"
+version = "0.1.0"
+authors = ["Caleb Leinz <caleb@leinz.io>"]
+description = "A Two Line Element parser in rust"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+nom = { version = "7.1.3" }
