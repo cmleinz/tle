@@ -1,40 +1,92 @@
 #![forbid(unsafe_code)]
 
+const DECIMAL_RADIX: u32 = 10;
+
+/// Some errors are ambiguous as to the line in which they occur.
+///
+/// Where that is the case, this enum is used to disambiguate.
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Line {
     Line1,
     Line2,
 }
 
+/// A description of where in the TLE the parsing and validation failed.
 #[non_exhaustive]
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Error {
+    /// In a TLE each line is required to be 69 characters in length
+    ///
+    /// For each line, this is first validation conducted
     InvalidLineSize(Line, usize),
-    Space(char, usize),
-    CatalogNumber(Line),
-    CatalogNumberMismatch,
+    /// Certain segments of the TLE are required to be an ASCII space character. In those cases,
+    /// if another character is encountered this error will be produced with the character found,
+    /// and the position found.
+    Space(Line, char, usize),
+    /// Failed to parse the satellite catalog number in the given line
+    SatlliteCatalogNumber(Line),
+    /// The classification must be one of three characters
+    ///
+    /// 1. 'U': Unclassified
+    /// 1. 'C': Classified
+    /// 1. 'S': Secret
+    ///
+    /// If the classification field matches none of these, this error will be produced
     Classification(char),
+    /// Represents a failure to parse the international designator's two digit launch year
     InternationalDesignatorLaunchYear,
+    /// Represents a failure to parse the international designator's three digit launch number
     InternationalDesignatorLaunchNumber,
-    InternationalDesignatorLaunchPiece,
+    /// Represents a failure to parse the two digit epoch year
     EpochYear,
+    /// Represents a failure to parse the epoch day
     EpochDay,
+    /// Represents a failure to parse the first derivative of mean motion
     FirstDerivative,
+    /// Represents a failure to parse the second derivative of mean motion
     SecondDerivative,
+    /// Represents a failure to parse B* drag term
     BStar,
+    /// Represents a validation failure, the ephemeris type must be '0'
     EphemerisType(char),
+    /// Represents a failure to parse the element set number
     ElementSetNumber,
+    /// Represents a failure to parse the inclination
     Inclination,
+    /// Represents a failure to parse the right ascension
     RightAscension,
+    /// Represents a failure to parse the eccentricity
     Eccentricty,
+    /// Represents a failure to parse the argument of perigee
     ArgumentOfPerigee,
+    /// Represents a failure to parse the mean anomaly
     MeanAnomaly,
+    /// Represents a failure to parse the mean motion
     MeanMotion,
+    /// Represents a failure to parse the revolution number
     RevolutionNumber,
-    Checksum(char),
+    /// Represents a failure to parse the checksum for the given line.
+    ///
+    /// This value must be a modulo 10 number
+    Checksum(Line, char),
+    /// The TLE checksum is calculated by summing all of the digits in the line, plus 1 for each '-'
+    /// character, modulo 10.
+    ///
+    /// If the calculated checksum does not match the one provided in the line, the line number,
+    /// found checksum, and calculated checksum will be returned
     InvalidChecksum(Line, u8, u8),
+    /// The first character of each line must be the number of the line i.e. '1' and '2'.
+    ///
+    /// If that check fails this error is propagated with the character found, and the line which
+    /// failed.
     LineNumber(Line, char),
-    SatelliteCatalogMismatch,
+    /// The second sequence in each line of the TLE is the satellite catalog number, this must be
+    /// consistent across both lines
+    ///
+    /// In the event of this error the values represent the satellite catalog numbers found in each
+    /// line
+    SatelliteCatalogNumberMismatch(u32, u32),
+    /// TLEs are required to contain only valid ASCII characters
     ContainsNonAsciiCharacter(Line),
 }
 
@@ -52,17 +104,21 @@ pub enum Classification {
     Secret,
 }
 
+/// A parsed and validate Two Line Element Set
+///
+/// This is primarily generated via the `parse` method
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct Tle {
     pub satellite_catalog_number: u32,
     pub classification: Classification,
-    pub internal_designator: InternationalDesignator,
+    pub international_designator: InternationalDesignator,
     pub epoch_year: u8,
     pub epoch_day_and_fractional_part: f64,
     pub first_derivative_of_mean_motion: f32,
     pub second_derivative_of_mean_motion: f32,
     pub b_star: f32,
     pub element_set_number: u16,
+    checksum_1: u8,
     pub inclination: f32,
     pub right_ascension_of_ascending_node: f32,
     pub eccentricity: f32,
@@ -70,13 +126,14 @@ pub struct Tle {
     pub mean_anomaly: f32,
     pub mean_motion: f32,
     pub revolution_number_at_epoch: u32,
+    checksum_2: u8,
 }
 
 macro_rules! split_space {
-    ($line:ident, $pos:literal) => {{
+    ($line_num:expr, $line:ident, $pos:literal) => {{
         let (slice, line) = $line.split_at(1);
         if slice[0] != ' ' {
-            return Err(Error::Space(slice[0], $pos));
+            return Err(Error::Space($line_num, slice[0], $pos));
         }
 
         line
@@ -97,11 +154,11 @@ impl Tle {
             return Err(Error::LineNumber(Line::Line1, line[0]));
         }
 
-        let line = split_space!(line, 8);
+        let line = split_space!(Line::Line1, line, 1);
 
         let (slice, line) = line.split_at(5);
         let Some(satellite_catalog_number_1) = as_digits(slice) else {
-            return Err(Error::CatalogNumber(Line::Line1));
+            return Err(Error::SatlliteCatalogNumber(Line::Line1));
         };
 
         let (slice, line) = line.split_at(1);
@@ -112,7 +169,7 @@ impl Tle {
             found => return Err(Error::Classification(found)),
         };
 
-        let line = split_space!(line, 8);
+        let line = split_space!(Line::Line1, line, 8);
 
         let (slice, line) = line.split_at(2);
         let Some(launch_year) = as_digits(slice) else {
@@ -132,7 +189,7 @@ impl Tle {
             launch_piece,
         };
 
-        let line = split_space!(line, 17);
+        let line = split_space!(Line::Line1, line, 17);
 
         let (slice, line) = line.split_at(2);
         let Some(epoch_year) = as_digits(slice) else {
@@ -144,7 +201,7 @@ impl Tle {
             return Err(Error::EpochDay);
         };
 
-        let line = split_space!(line, 32);
+        let line = split_space!(Line::Line1, line, 32);
 
         let (slice, line) = line.split_at(10);
         let slice = trim_leading_space(slice);
@@ -152,7 +209,7 @@ impl Tle {
             return Err(Error::FirstDerivative);
         };
 
-        let line = split_space!(line, 43);
+        let line = split_space!(Line::Line1, line, 43);
 
         let (slice, line) = line.split_at(8);
         let second_derivative_of_mean_motion = match parse_tle_f32(slice) {
@@ -160,7 +217,7 @@ impl Tle {
             Err(e) => return Err(e),
         };
 
-        let line = split_space!(line, 52);
+        let line = split_space!(Line::Line1, line, 52);
 
         let (mut slice, line) = line.split_at(8);
         let mut sign = 1.0;
@@ -175,13 +232,13 @@ impl Tle {
             Err(e) => return Err(e),
         };
 
-        let line = split_space!(line, 61);
+        let line = split_space!(Line::Line1, line, 61);
         let (slice, line) = line.split_at(1);
         if slice[0] != '0' {
             return Err(Error::EphemerisType(slice[0]));
         }
 
-        let line = split_space!(line, 63);
+        let line = split_space!(Line::Line1, line, 63);
 
         let (slice, line) = line.split_at(4);
         let slice = trim_leading_space(slice);
@@ -190,9 +247,10 @@ impl Tle {
             return Err(Error::ElementSetNumber);
         };
 
-        let Some(_checksum_1) = as_digits(line) else {
-            return Err(Error::Checksum(line[0]));
+        let Some(checksum_1) = as_digits(line) else {
+            return Err(Error::Checksum(Line::Line1, line[0]));
         };
+        let checksum_1 = checksum_1 as u8;
 
         let line = match validate_line(line2, Line::Line2) {
             Ok(l) => l,
@@ -204,19 +262,22 @@ impl Tle {
             return Err(Error::LineNumber(Line::Line2, *slice));
         }
 
-        let line = split_space!(line, 1);
+        let line = split_space!(Line::Line1, line, 1);
 
         let (slice, line) = line.split_at(5);
         let Some(satellite_catalog_number_2) = as_digits(slice) else {
-            return Err(Error::CatalogNumber(Line::Line2));
+            return Err(Error::SatlliteCatalogNumber(Line::Line2));
         };
 
         if satellite_catalog_number_1 != satellite_catalog_number_2 {
-            return Err(Error::CatalogNumberMismatch);
+            return Err(Error::SatelliteCatalogNumberMismatch(
+                satellite_catalog_number_1,
+                satellite_catalog_number_2,
+            ));
         }
         let satellite_catalog_number = satellite_catalog_number_1;
 
-        let line = split_space!(line, 7);
+        let line = split_space!(Line::Line2, line, 7);
 
         let (slice, line) = line.split_at(8);
         let slice = trim_leading_space(slice);
@@ -224,14 +285,14 @@ impl Tle {
             return Err(Error::Inclination);
         };
 
-        let line = split_space!(line, 16);
+        let line = split_space!(Line::Line2, line, 16);
 
         let (slice, line) = line.split_at(8);
         let Ok(right_ascension_of_ascending_node) = String::from_iter(slice).parse::<f32>() else {
             return Err(Error::RightAscension);
         };
 
-        let line = split_space!(line, 25);
+        let line = split_space!(Line::Line2, line, 25);
 
         let (slice, line) = line.split_at(7);
         let Some(eccentricity) = as_digits(slice) else {
@@ -243,21 +304,21 @@ impl Tle {
         let leading_zeroes = dig as i32 - slice.len() as i32;
         let eccentricity = (eccentricity as f32).powi(leading_zeroes);
 
-        let line = split_space!(line, 33);
+        let line = split_space!(Line::Line2, line, 33);
 
         let (slice, line) = line.split_at(8);
         let Ok(argument_of_perigee) = String::from_iter(slice).parse::<f32>() else {
             return Err(Error::ArgumentOfPerigee);
         };
 
-        let line = split_space!(line, 42);
+        let line = split_space!(Line::Line2, line, 42);
 
         let (slice, line) = line.split_at(8);
         let Ok(mean_anomaly) = String::from_iter(slice).parse::<f32>() else {
             return Err(Error::MeanAnomaly);
         };
 
-        let line = split_space!(line, 51);
+        let line = split_space!(Line::Line2, line, 51);
 
         let (slice, line) = line.split_at(11);
         let Ok(mean_motion) = String::from_iter(slice).parse::<f32>() else {
@@ -269,20 +330,22 @@ impl Tle {
             return Err(Error::MeanMotion);
         };
 
-        let Some(_checksum_2) = as_digits(line) else {
-            return Err(Error::Checksum(line[0]));
+        let Some(checksum_2) = as_digits(line) else {
+            return Err(Error::Checksum(Line::Line2, line[0]));
         };
+        let checksum_2 = checksum_2 as u8;
 
         let me = Tle {
             satellite_catalog_number,
             classification,
-            internal_designator,
+            international_designator: internal_designator,
             epoch_year: epoch_year as u8,
             epoch_day_and_fractional_part,
             first_derivative_of_mean_motion,
             second_derivative_of_mean_motion,
             b_star,
             element_set_number: element_set_number as u16,
+            checksum_1,
             inclination,
             right_ascension_of_ascending_node,
             eccentricity,
@@ -290,6 +353,7 @@ impl Tle {
             mean_anomaly,
             mean_motion,
             revolution_number_at_epoch,
+            checksum_2,
         };
 
         Ok(me)
@@ -354,19 +418,23 @@ const fn validate_line(line: &[u8], line_num: Line) -> Result<[char; Tle::LINE_L
         return Err(Error::ContainsNonAsciiCharacter(line_num));
     }
 
+    Ok(tle_line(line))
+}
+
+/// # Panics
+///
+/// Panics if the line is less than the Tle::LINE_LEN
+const fn tle_line(line: &[u8]) -> [char; Tle::LINE_LEN] {
     let mut arr = [char::MAX; Tle::LINE_LEN];
     let mut i = 0;
     while i < Tle::LINE_LEN {
         arr[i] = line[i] as char;
         i += 1;
     }
-
-    Ok(arr)
+    arr
 }
 
 const fn as_digits(chars: &[char]) -> Option<u32> {
-    const DECIMAL_RADIX: u32 = 10;
-
     if chars.len() == 0 {
         return None;
     }
