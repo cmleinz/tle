@@ -143,6 +143,40 @@ macro_rules! split_space {
 impl Tle {
     const LINE_LEN: usize = 69;
 
+    /// Parses the lines as a TLE, then performs validation on the resulting TLE instance to
+    /// ensure the checksums are calculated correctly
+    ///
+    /// TODO: Currently generate_checksum is not working correctly
+    #[allow(unused)]
+    fn parse_and_validate(line1: &[u8], line2: &[u8]) -> Result<Self, Error> {
+        let me = match Self::parse(line1, line2) {
+            Ok(me) => me,
+            Err(error) => return Err(error),
+        };
+
+        let line1 = tle_line(line1);
+        let calculated_checksum_1 = generate_checksum(line1.as_ref());
+        if me.checksum_1 != calculated_checksum_1 {
+            return Err(Error::InvalidChecksum(
+                Line::Line1,
+                me.checksum_1,
+                calculated_checksum_1,
+            ));
+        }
+
+        let line2 = tle_line(line2);
+        let calculated_checksum_2 = generate_checksum(line2.as_ref());
+        if me.checksum_2 != calculated_checksum_2 {
+            return Err(Error::InvalidChecksum(
+                Line::Line1,
+                me.checksum_2,
+                calculated_checksum_1,
+            ));
+        }
+
+        Ok(me)
+    }
+
     pub fn parse(line1: &[u8], line2: &[u8]) -> Result<Self, Error> {
         let line = match validate_line(line1, Line::Line1) {
             Ok(l) => l,
@@ -371,6 +405,22 @@ const fn trim_leading_space(line: &[char]) -> &[char] {
     }
     let (_trimmmed, slice) = line.split_at(blank);
     slice
+}
+
+const fn generate_checksum(line: &[char]) -> u8 {
+    let mut i = 0;
+    let mut sum = 0;
+    while i < line.len() {
+        if line[i] == '-' {
+            sum += 1;
+        } else if let Some(dig) = line[i].to_digit(DECIMAL_RADIX) {
+            sum += dig;
+        }
+
+        i += 1;
+    }
+
+    (sum % 10) as u8
 }
 
 fn parse_tle_f32(line: &[char]) -> Result<f32, Error> {
