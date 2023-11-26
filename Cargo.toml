@@ -2,10 +2,11 @@
 name = "tle"
 version = "0.1.0"
 authors = ["Caleb Leinz <caleb@leinz.io>"]
-description = "A Two Line Element parser in rust"
+description = "A Two Line Element parser and validator"
 license = "MIT"
 repository = "https://github.com/cmleinz/tle"
 readme = "README.md"
-keywords = ["parser"]
-categories = ["parsing"]
+keywords = ["parser", "space"]
+documentation = "https://docs.rs/tle/"
+categories = ["parsing", "science", "aerospace"]
 edition = "2021"
