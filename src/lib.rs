@@ -147,6 +147,7 @@ impl Tle {
         let line = split_space!(line, 32);
 
         let (slice, line) = line.split_at(10);
+        let slice = trim_leading_space(slice);
         let Ok(first_derivative_of_mean_motion) = String::from_iter(slice).parse::<f32>() else {
             return Err(Error::FirstDerivative);
         };
@@ -391,8 +392,13 @@ mod tests {
 
     #[test]
     fn tle_test() {
+        // ISS
         let line1 = b"1 25544U 98067A   08264.51782528 -.00002182  00000-0 -11606-4 0  2927";
         let line2 = b"2 25544  51.6416 247.4627 0006703 130.5360 325.0288 15.72125391563537";
+        let _ = Tle::parse(line1, line2).unwrap();
+        // NOAA 14
+        let line1 = b"1 23455U 94089A   97320.90946019  .00000140  00000-0  10191-3 0  2621";
+        let line2 = b"2 23455  99.0090 272.6745 0008546 223.1686 136.8816 14.11711747148495";
         let _ = Tle::parse(line1, line2).unwrap();
     }
 
